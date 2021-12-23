@@ -1,15 +1,9 @@
-use std::{fmt, process, str, path::Path};
 use failure::Fail;
+use std::{fmt, os::windows::process::CommandExt, path::Path, process, str};
 
 pub use std::process::{
-    Stdio,
-    ExitStatus,
-    Output,
-    ChildStdin as Stdin,
-    ChildStdout as Stdout,
-    ChildStderr as Stderr,
+    ChildStderr as Stderr, ChildStdin as Stdin, ChildStdout as Stdout, ExitStatus, Output, Stdio,
 };
-
 
 // TODO: a lot of this stuff needs rethought
 // For example which of the existing types in
@@ -19,6 +13,7 @@ pub use std::process::{
 // TODO: add logging using the right logging crate
 
 const POWERSHELL_EXE: &str = "powershell.exe";
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct PsCommand {
     command: process::Command,
@@ -26,39 +21,66 @@ pub struct PsCommand {
 
 impl PsCommand {
     pub fn new<C: AsRef<str>>(command_str: C) -> Self {
-        Self { command: Self::create_command(command_str.as_ref()) }
+        Self {
+            command: Self::create_command(command_str.as_ref()),
+        }
     }
 
-    pub fn from_script<'a, P: AsRef<Path>, S: AsRef<str>, A: IntoIterator<Item=S>>(script_path: P, args: A) -> Result<Self, PsError> {
-        Ok(Self { command: Self::create_script_command(script_path.as_ref(), args.into_iter())? })
+    pub fn from_script<'a, P: AsRef<Path>, S: AsRef<str>, A: IntoIterator<Item = S>>(
+        script_path: P,
+        args: A,
+    ) -> Result<Self, PsError> {
+        Ok(Self {
+            command: Self::create_script_command(script_path.as_ref(), args.into_iter())?,
+        })
     }
 
     fn create_command(command_str: &str) -> process::Command {
         let mut command = process::Command::new(POWERSHELL_EXE);
-        command.arg("-NoProfile").arg("-NonInteractive").arg("-NoLogo").arg("-ExecutionPolicy").arg("Bypass").arg("-Command");
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-NoLogo")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-Command");
 
         for part in command_str.split_whitespace() {
             // TODO: here ensure that none of the 'part's are
             // matching or is in conflit with the standard args
             // like "-NoProfile" we've specified above.
-            // If any of them is, then return failure 
+            // If any of them is, then return failure
             command.arg(part);
         }
 
         command
     }
 
-    fn create_script_command<'a, S: AsRef<str>, A: IntoIterator<Item=S>>(script_path: &Path, args: A) -> Result<process::Command, PsError> {
-        let script_path = script_path.to_str().ok_or_else(|| PsError{ msg: format!("Invalid path: {}", script_path.display()) })?;
+    fn create_script_command<'a, S: AsRef<str>, A: IntoIterator<Item = S>>(
+        script_path: &Path,
+        args: A,
+    ) -> Result<process::Command, PsError> {
+        let script_path = script_path.to_str().ok_or_else(|| PsError {
+            msg: format!("Invalid path: {}", script_path.display()),
+        })?;
         let mut command = process::Command::new(POWERSHELL_EXE);
-        command.arg("-NoProfile").arg("-NonInteractive").arg("-NoLogo").arg("-ExecutionPolicy").arg("Bypass").arg("-File").arg(script_path);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-NoLogo")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-File")
+            .arg(script_path);
 
         for arg in args {
             // TODO: enclose arg in quotes incase it has embedded whitespace
             // TODO: here ensure that none of the 'part's are
             // matching or is in conflit with the standard args
             // like "-NoProfile" we've specified above.
-            // If any of them is, then return failure 
+            // If any of them is, then return failure
             command.arg(arg.as_ref());
         }
 
@@ -81,19 +103,22 @@ impl PsCommand {
     }
 
     pub fn spawn(&mut self) -> Result<PsProcess, PsError> {
-        let child = self.command.spawn()
-            .map_err(|e| PsError{ msg: format!("Failed to spawn: {}", e) })?;
+        let child = self.command.spawn().map_err(|e| PsError {
+            msg: format!("Failed to spawn: {}", e),
+        })?;
         Ok(PsProcess(child))
     }
 
     pub fn output(&mut self) -> Result<Output, PsError> {
-        self.command.output()
-            .map_err(|e| PsError{ msg: format!("Failed to spawn: {}", e) })
+        self.command.output().map_err(|e| PsError {
+            msg: format!("Failed to spawn: {}", e),
+        })
     }
 
     pub fn status(&mut self) -> Result<ExitStatus, PsError> {
-        self.command.status()
-            .map_err(|e| PsError{ msg: format!("Failed to spawn: {}", e) })
+        self.command.status().map_err(|e| PsError {
+            msg: format!("Failed to spawn: {}", e),
+        })
     }
 }
 
@@ -113,8 +138,7 @@ impl PsProcess {
     }
 
     pub fn kill(&mut self) -> Result<(), PsError> {
-        self.0.kill()
-            .map_err(|e| PsError { msg: e.to_string() })
+        self.0.kill().map_err(|e| PsError { msg: e.to_string() })
     }
 
     pub fn id(&self) -> u32 {
@@ -122,17 +146,18 @@ impl PsProcess {
     }
 
     pub fn wait(&mut self) -> Result<ExitStatus, PsError> {
-         self.0.wait()
-            .map_err(|e| PsError { msg: e.to_string() })
+        self.0.wait().map_err(|e| PsError { msg: e.to_string() })
     }
 
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, PsError> {
-         self.0.try_wait()
+        self.0
+            .try_wait()
             .map_err(|e| PsError { msg: e.to_string() })
     }
 
     pub fn wait_with_output(self) -> Result<Output, PsError> {
-         self.0.wait_with_output()
+        self.0
+            .wait_with_output()
             .map_err(|e| PsError { msg: e.to_string() })
     }
 }
@@ -140,7 +165,12 @@ impl PsProcess {
 pub fn ps_version() -> Result<PsVersion, PsError> {
     let output = PsCommand::new("$PSVersionTable.PSVersion.ToString()")
         .output()
-        .map_err(|e| PsError { msg: format!("Failed to spawn powershell process to read from the version table: {}", e) })?;
+        .map_err(|e| PsError {
+            msg: format!(
+                "Failed to spawn powershell process to read from the version table: {}",
+                e
+            ),
+        })?;
 
     if !output.status.success() {
         let code_str = if output.status.code().is_some() {
@@ -148,7 +178,12 @@ pub fn ps_version() -> Result<PsVersion, PsError> {
         } else {
             "<unknown>".to_owned()
         };
-        return Err(PsError { msg: format!("Reading from version table failed with exit code {}", code_str) });
+        return Err(PsError {
+            msg: format!(
+                "Reading from version table failed with exit code {}",
+                code_str
+            ),
+        });
     }
 
     let version = to_string(&output.stdout).parse::<PsVersion>()?;
@@ -172,7 +207,7 @@ pub struct PsVersion {
     pub major: u32,
     pub minor: u32,
     pub build: i32,
-    pub revision: i32
+    pub revision: i32,
 }
 
 impl str::FromStr for PsVersion {
@@ -181,7 +216,9 @@ impl str::FromStr for PsVersion {
         // TODO: Optimize this. Avoid allocations if we can.
         let version_str = version_str.trim();
         let parts = version_str.split('.').collect::<Vec<_>>();
-        let error = || PsError { msg: format!("Cannot parse '{}' into PowerShell version", version_str) };
+        let error = || PsError {
+            msg: format!("Cannot parse '{}' into PowerShell version", version_str),
+        };
 
         if parts.len() != 4 {
             return Err(error());
@@ -192,13 +229,22 @@ impl str::FromStr for PsVersion {
         let build = parts[2].parse::<i32>().map_err(|_| error())?;
         let revision = parts[3].parse::<i32>().map_err(|_| error())?;
 
-        Ok(Self { major, minor, build, revision })
+        Ok(Self {
+            major,
+            minor,
+            build,
+            revision,
+        })
     }
 }
 
 impl fmt::Display for PsVersion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}.{}.{}.{}", self.major, self.minor, self.build, self.revision)
+        write!(
+            f,
+            "{}.{}.{}.{}",
+            self.major, self.minor, self.build, self.revision
+        )
     }
 }
 
